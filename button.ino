@@ -34,15 +34,16 @@
 TFT_eSPI tft = TFT_eSPI();
 
 #define MAX_X 240
-#define MAX_y 320
+#define MAX_Y 320
 #define MAX_NAME   8
 #define AMP_MAX    9
 #define FEQ_MAX    5
-#define X_ITEM_MAX 4
-#define Y_ITEM_MAX 10
 #define Y_START    10
 #define MAX_BTN_NUM  2
-
+#define  MAX_ENTRY 2
+#define DEFAULT_FONT_SIZE 3
+#define DEFAULT_AMP_IDX    4
+#define DEFAULT_FREQ_IDX   3
 enum key_state
 {
     key_pressed = 1,
@@ -56,18 +57,11 @@ enum btn_key_define
     btn_max
 };
 
-typedef struct cur_pos
-{
-    int col_pos;
-    int row_pos;
-}cur_pos;
-
 typedef struct btn_key_ctrl
 {
     int key_state;
     int pin_num;
     void (*btn_action)(void);
-    cur_pos c_pos;
 }btn_key_ctrl;
 
 
@@ -76,25 +70,113 @@ typedef struct item_info
     char item_name[MAX_NAME];
 }item_info;
 
+
+typedef struct entry_pos_s
+{
+    int start_y;
+    int start_x;
+    int option_x;
+}entry_pos_t;
+
 typedef struct menu_colums
 {
     item_info *item_list;
-    int items_cnt;
     char m_name[MAX_NAME];
-}menu_colums;
+    char items_cnt;
+    char font_size;
+    char item_idx;
+    entry_pos_t entry_pos;
+}menu_entry_t;
 
 void move_up(void);
 void move_down(void);
 
-item_info amp_items[AMP_MAX]={{"5pC"},{"10pC"},{"20pC"},{"50pC"},{"100pC"},{"200pC"},{"500pC"},{"1000pC"},{"2000pC"}};
-item_info feq_items[FEQ_MAX] = {{"50HZ"},{"100HZ"},{"200HZ"},{"500HZ"},{"1000HZ"}};
-btn_key_ctrl btn_ctrl[MAX_BTN_NUM]={{key_release,WIO_KEY_A,move_up,{0,0}},{key_release,WIO_KEY_B,move_down,{0,0}}};
-
-menu_colums  m_colums[]={
-  {amp_items,AMP_MAX,"AMP"},
-  {feq_items,FEQ_MAX,"FEQ"}
+item_info    amp_items[AMP_MAX]={{"5pC"},{"10pC"},{"20pC"},{"50pC"},{"100pC"},{"200pC"},{"500pC"},{"1000pC"},{"2000pC"}};
+item_info    feq_items[FEQ_MAX] = {{"50HZ"},{"100HZ"},{"200HZ"},{"500HZ"},{"1000HZ"}};
+btn_key_ctrl btn_ctrl[MAX_BTN_NUM]={{key_release,WIO_KEY_A,move_up},{key_release,WIO_KEY_B,move_down}};
+int    cur_entry = 0;
+menu_entry_t m_entries[MAX_ENTRY]={
+  {amp_items,"AMP",AMP_MAX,DEFAULT_FONT_SIZE,DEFAULT_AMP_IDX,{0,0,0}},
+  {feq_items,"FEQ",FEQ_MAX,DEFAULT_FONT_SIZE,DEFAULT_FREQ_IDX,{0,0,0}}
 };
 
+
+void init_user_gui()
+{
+    int x_gap = MAX_X/2;
+    int y_gap = MAX_Y/MAX_ENTRY;
+    int x_blank = x_gap/3;
+    int y_middle = (y_gap)/3;
+    for(int i = 0 ; i < MAX_ENTRY ; i++)
+    {
+        m_entries[i].entry_pos.start_x =  x_blank;
+        m_entries[i].entry_pos.option_x = x_gap;
+        m_entries[i].entry_pos.start_y =  i*y_gap + y_middle;
+    }
+}
+
+
+void ui_draw_string(char * in_str,int x, int y,int font_sz)
+{
+  #ifdef SEEED_LCD
+    //tft.setFreeFont(FF1);
+    tft.setTextSize(font_sz);
+    tft.drawString(in_str,x, y);
+    //tft.setCursor(x, y); 
+    //tft.print(in_str);
+  #endif
+}
+
+void display_user_gui()
+{
+    menu_entry_t * p_entry;
+    init_user_gui();
+    for(int i = 0 ; i < MAX_ENTRY ; i++)
+    {
+        p_entry = &m_entries[i];
+        ui_draw_string(p_entry->m_name,p_entry->entry_pos.start_x,p_entry->entry_pos.start_y,p_entry->font_size);
+        ui_draw_string(p_entry->item_list[p_entry->item_idx].item_name,p_entry->entry_pos.option_x,p_entry->entry_pos.start_y,p_entry->font_size);
+    }
+}
+
+void display_current_option()
+{
+    int cur_entry = cur_entry;
+    if(cur_entry >= MAX_ENTRY)
+        return;
+    menu_entry_t * p_entry = &m_entries[cur_entry];
+    ui_draw_string(p_entry->item_list[p_entry->item_idx].item_name,p_entry->entry_pos.option_x,p_entry->entry_pos.start_y,p_entry->font_size);
+}
+
+void menu_update(int press_key)
+{
+    menu_entry_t * p_entry = &m_entries[cur_entry];
+    int cur_item = p_entry->item_idx;
+    int max_item = p_entry->items_cnt-1;
+    switch(press_key)
+    {
+        case btn_up:
+            cur_item -= 1;
+            if(cur_item <= 0)
+            {
+                cur_item = max_item;
+            }
+            p_entry->item_idx = cur_item;
+
+            break;
+        case btn_down:
+            cur_item += 1;
+            if(cur_item >= max_item)
+            {
+                cur_item = 0;
+            }
+            p_entry->item_idx = cur_item;
+
+            break;
+    }
+    display_current_option();
+}
+#if 0
 typedef struct pos_list
 {
   int xray_list[X_ITEM_MAX];
@@ -138,21 +220,11 @@ int init_user_menu(void)
     }
     return 0;
 }
-
-typedef void (*draw_string)(char * in_str,int x, int y);
-
-void ui_draw_string(char * in_str,int x, int y)
-{
-  #ifdef SEEED_LCD
-    //tft.setFreeFont(FF1);
-    tft.setTextSize(2);
-    tft.drawString(in_str,x, y);
-    //tft.setCursor(x, y); 
-    //tft.print(in_str);
-  #endif
-}
+#endif
 
 
+
+#if 0
 void display_user_menu(user_menu *usr_m)
 {
     int x_cnt = usr_m->col_cnt;
@@ -169,6 +241,7 @@ void display_user_menu(user_menu *usr_m)
        }
     }
 }
+#endif
 
 //button pressed and release
 
@@ -188,6 +261,7 @@ void move_up(void)
 {
     #ifdef SEEED_LCD
     Serial.println("A Key pressed");
+    menu_update(btn_up);
     #endif
 }
 
@@ -195,6 +269,7 @@ void move_down(void)
 {
     #ifdef SEEED_LCD
     Serial.println("B Key pressed");
+    menu_update(btn_down);
     #endif
 }
 
@@ -251,13 +326,10 @@ for(int i = 0; i < MAX_BTN_NUM ;i++)
 void setup() {
     Serial.begin(115200);
     tft.begin();
-    
-    int xpos =  0;
-    int ypos = 40;
-
     button_init();
-    init_user_menu();
-    display_user_menu(&u_menu);
+    display_user_gui();
+    //init_user_menu();
+    //display_user_menu(&u_menu);
     
 }
 
