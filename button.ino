@@ -45,7 +45,7 @@ TFT_eSPI tft = TFT_eSPI();
 #define DEFAULT_FONT_SIZE  4
 #define DEFAULT_AMP_IDX    4
 #define DEFAULT_FREQ_IDX   3
-#define TIME_OUT_MS        3000
+#define TIME_OUT_MS        1500
 enum key_state
 {
     key_init = 1,
@@ -53,6 +53,13 @@ enum key_state
     key_release,
     both_pressed,
     both_release,
+};
+
+enum time_out_state
+{
+    not_timeout = 0,
+    in_timeout ,
+    out_timeout,
 };
 
 enum btn_key_define
@@ -97,7 +104,8 @@ typedef struct menu_colums
 
 typedef struct timeout_ctrl_s
 {
-    int start_time;
+    int key_time;
+    int key_triggle;
     int timeout_time;
 }timeout_ctrl_t;
 
@@ -106,10 +114,11 @@ void move_down(void);
 void two_click_action(void); 
 item_info    amp_items[AMP_MAX]={{"5pC   "},{"10pC  "},{"20pC  "},{"50pC  "},{"100pC "},{"200pC "},{"500pC "},{"1000pC"},{"2000pC"}};
 item_info    feq_items[FEQ_MAX] = {{"50HZ  "},{"100HZ "},{"200HZ "},{"500HZ "},{"1000HZ"}};
+char blank_entry[MAX_NAME]={"      "};
 btn_key_ctrl btn_ctrl[MAX_BTN_NUM]={{key_init,WIO_KEY_A,1,move_up},{key_init,WIO_KEY_B,1,move_down}};
 int    cur_entry = 0;
 char  btn_io_volt[MAX_BTN_NUM]={1,1};//default high voltatge, pressed -->0
-timeout_ctrl_t tm_ctrl={0,TIME_OUT_MS};
+timeout_ctrl_t tm_ctrl={0,0,TIME_OUT_MS};
 menu_entry_t m_entries[MAX_ENTRY]={
   {amp_items,"AMP",AMP_MAX,DEFAULT_FONT_SIZE,DEFAULT_AMP_IDX,{X_START,Y_START,150}},
   {feq_items,"FEQ",FEQ_MAX,DEFAULT_FONT_SIZE,DEFAULT_FREQ_IDX,{X_START,Y_START+70,150}}
@@ -124,18 +133,49 @@ menu_entry_t m_entries[MAX_ENTRY]={
 #define SET_BTN_STATE(btn,state)    btn_ctrl[btn].key_state = state
 #define BTN_KEY_ACTION(btn)         btn_ctrl[btn].btn_action()
 
+//blinking three seconds
 void timeout_start()
 {
-    tm_ctrl.start_time = millis();
+    tm_ctrl.key_time = millis();
+    tm_ctrl.key_triggle = 1;
+}
+
+void timeout_stop()
+{
+    tm_ctrl.key_time = 0;
+    tm_ctrl.key_triggle = 0;
 }
 
 int timeout_check()
 {
     int cur_tm = millis();
-    if((cur_tm - tm_ctrl.start_time)>=tm_ctrl.timeout_time)
+    if(tm_ctrl.key_triggle == 0)
+        return 0;
+    if((cur_tm - tm_ctrl.key_time)<tm_ctrl.timeout_time)
         return 1;
+    else
+    {
+        timeout_stop();
+        return 2;
+    }
     return 0;
 }
+/*
+int blinking_check()
+{
+    if(tm_ctrl.key_time == 0)
+    {
+        tm_ctrl.key_time = millis();
+        return 0;
+    }
+    else
+    {
+        int cur_tm = millis();
+        if((cur_tm - tm_ctrl.key_time)<tm_ctrl.timeout_time)
+            return 1;
+    }
+    return 0;
+}*/
 
 /*
 #define BTN_PRESSED(btn) btn_pressed |= (1<<btn)
@@ -216,6 +256,59 @@ void menu_update(int press_key)
     }
     //display_current_option();
     //display_user_gui();
+    timeout_start();
+}
+int previous_time = 0;
+int is_info_now = 0;
+void user_menu_display()
+{
+    menu_entry_t * p_entry;
+    //init_user_gui();
+    for(int i = 0 ; i < MAX_ENTRY ; i++)
+    {
+        p_entry = &m_entries[i];
+        if(i != cur_entry)
+        {
+            //tft.setTextColor(TFT_YELLOW, TFT_BLACK);
+            tft.setTextColor(TFT_WHITE, TFT_BLACK);
+            ui_draw_string(p_entry->m_name,p_entry->entry_pos.start_x,p_entry->entry_pos.start_y,p_entry->font_size);
+            ui_draw_string(p_entry->item_list[p_entry->item_idx].item_name,p_entry->entry_pos.option_x,p_entry->entry_pos.start_y,p_entry->font_size);
+        }
+        else
+        {
+            int t_check = timeout_check();
+            tft.setTextColor(TFT_YELLOW, TFT_BLACK);
+            ui_draw_string(p_entry->m_name,p_entry->entry_pos.start_x,p_entry->entry_pos.start_y,p_entry->font_size);
+            if( t_check == in_timeout)
+            {
+                if(previous_time == 0)
+                    previous_time = millis();
+                int now_tm = millis();
+                if((now_tm - previous_time)>200)
+                {
+                    previous_time = 0;
+                    is_info_now = (is_info_now)?0:1;
+                }
+                if(is_info_now)
+                {
+                    ui_draw_string(p_entry->item_list[p_entry->item_idx].item_name,p_entry->entry_pos.option_x,p_entry->entry_pos.start_y,p_entry->font_size);
+                }
+                else
+                {
+                    ui_draw_string(blank_entry,p_entry->entry_pos.option_x,p_entry->entry_pos.start_y,p_entry->font_size);
+                }
+
+            }
+            else 
+            {
+                ui_draw_string(p_entry->item_list[p_entry->item_idx].item_name,p_entry->entry_pos.option_x,p_entry->entry_pos.start_y,p_entry->font_size);
+                if(t_check  == out_timeout)
+                {
+                    Serial.println("send remote cmd");
+                }
+            }
+        }
+    }
 }
 
 void entry_update()
@@ -592,4 +685,5 @@ void setup() {
 // the loop function runs over and over again forever
 void loop() {
     button_detect();
+    user_menu_display();
 }
