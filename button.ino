@@ -38,16 +38,21 @@ TFT_eSPI tft = TFT_eSPI();
 #define MAX_NAME   8
 #define AMP_MAX    9
 #define FEQ_MAX    5
-#define Y_START    10
+#define X_START    30
+#define Y_START    70
 #define MAX_BTN_NUM  2
 #define  MAX_ENTRY 2
-#define DEFAULT_FONT_SIZE 3
+#define DEFAULT_FONT_SIZE  4
 #define DEFAULT_AMP_IDX    4
 #define DEFAULT_FREQ_IDX   3
+#define TIME_OUT_MS        3000
 enum key_state
 {
-    key_pressed = 1,
-    key_release
+    key_init = 1,
+    key_pressed,
+    key_release,
+    both_pressed,
+    both_release,
 };
 
 enum btn_key_define
@@ -59,9 +64,11 @@ enum btn_key_define
 
 typedef struct btn_key_ctrl
 {
-    int key_state;
-    int pin_num;
+    char key_state;
+    char pin_num;
+    char key_volt;
     void (*btn_action)(void);
+    void (*two_btn_action)(void);
 }btn_key_ctrl;
 
 
@@ -73,8 +80,8 @@ typedef struct item_info
 
 typedef struct entry_pos_s
 {
-    int start_y;
     int start_x;
+    int start_y;
     int option_x;
 }entry_pos_t;
 
@@ -88,18 +95,53 @@ typedef struct menu_colums
     entry_pos_t entry_pos;
 }menu_entry_t;
 
+typedef struct timeout_ctrl_s
+{
+    int start_time;
+    int timeout_time;
+}timeout_ctrl_t;
+
 void move_up(void);
 void move_down(void);
-
-item_info    amp_items[AMP_MAX]={{"5pC"},{"10pC"},{"20pC"},{"50pC"},{"100pC"},{"200pC"},{"500pC"},{"1000pC"},{"2000pC"}};
-item_info    feq_items[FEQ_MAX] = {{"50HZ"},{"100HZ"},{"200HZ"},{"500HZ"},{"1000HZ"}};
-btn_key_ctrl btn_ctrl[MAX_BTN_NUM]={{key_release,WIO_KEY_A,move_up},{key_release,WIO_KEY_B,move_down}};
+void two_click_action(void); 
+item_info    amp_items[AMP_MAX]={{"5pC   "},{"10pC  "},{"20pC  "},{"50pC  "},{"100pC "},{"200pC "},{"500pC "},{"1000pC"},{"2000pC"}};
+item_info    feq_items[FEQ_MAX] = {{"50HZ  "},{"100HZ "},{"200HZ "},{"500HZ "},{"1000HZ"}};
+btn_key_ctrl btn_ctrl[MAX_BTN_NUM]={{key_init,WIO_KEY_A,1,move_up},{key_init,WIO_KEY_B,1,move_down}};
 int    cur_entry = 0;
+char  btn_io_volt[MAX_BTN_NUM]={1,1};//default high voltatge, pressed -->0
+timeout_ctrl_t tm_ctrl={0,TIME_OUT_MS};
 menu_entry_t m_entries[MAX_ENTRY]={
-  {amp_items,"AMP",AMP_MAX,DEFAULT_FONT_SIZE,DEFAULT_AMP_IDX,{0,0,0}},
-  {feq_items,"FEQ",FEQ_MAX,DEFAULT_FONT_SIZE,DEFAULT_FREQ_IDX,{0,0,0}}
+  {amp_items,"AMP",AMP_MAX,DEFAULT_FONT_SIZE,DEFAULT_AMP_IDX,{X_START,Y_START,150}},
+  {feq_items,"FEQ",FEQ_MAX,DEFAULT_FONT_SIZE,DEFAULT_FREQ_IDX,{X_START,Y_START+70,150}}
 };
 
+#define SET_BTN_VOLT(btn,state)     btn_ctrl[btn].key_volt = state
+#define BOTH_KEY_PRESSED()          (btn_ctrl[0].key_volt == 0 && btn_ctrl[1].key_volt == 0)
+#define BOTH_KEY_RELEASE()          (btn_ctrl[0].key_volt == 1 && btn_ctrl[1].key_volt == 1)
+
+#define GET_BTN_VOLT(btn)           btn_ctrl[btn].key_volt
+#define GET_BTN_STATE(btn)          btn_ctrl[btn].key_state
+#define SET_BTN_STATE(btn,state)    btn_ctrl[btn].key_state = state
+#define BTN_KEY_ACTION(btn)         btn_ctrl[btn].btn_action()
+
+void timeout_start()
+{
+    tm_ctrl.start_time = millis();
+}
+
+int timeout_check()
+{
+    int cur_tm = millis();
+    if((cur_tm - tm_ctrl.start_time)>=tm_ctrl.timeout_time)
+        return 1;
+    return 0;
+}
+
+/*
+#define BTN_PRESSED(btn) btn_pressed |= (1<<btn)
+#define BTN_RELEASE(btn) btn_pressed &= ~(1<<btn)
+#define ALL_KEY_PRESSED() (btn_pressed==(1<<btn_max -1))?1:0
+#define ALL_KEY_RELEASED() btn_pressed = 0
 
 void init_user_gui()
 {
@@ -115,6 +157,7 @@ void init_user_gui()
     }
 }
 
+*/
 
 void ui_draw_string(char * in_str,int x, int y,int font_sz)
 {
@@ -130,7 +173,7 @@ void ui_draw_string(char * in_str,int x, int y,int font_sz)
 void display_user_gui()
 {
     menu_entry_t * p_entry;
-    init_user_gui();
+    //init_user_gui();
     for(int i = 0 ; i < MAX_ENTRY ; i++)
     {
         p_entry = &m_entries[i];
@@ -141,9 +184,6 @@ void display_user_gui()
 
 void display_current_option()
 {
-    int cur_entry = cur_entry;
-    if(cur_entry >= MAX_ENTRY)
-        return;
     menu_entry_t * p_entry = &m_entries[cur_entry];
     ui_draw_string(p_entry->item_list[p_entry->item_idx].item_name,p_entry->entry_pos.option_x,p_entry->entry_pos.start_y,p_entry->font_size);
 }
@@ -157,7 +197,7 @@ void menu_update(int press_key)
     {
         case btn_up:
             cur_item -= 1;
-            if(cur_item <= 0)
+            if(cur_item < 0)
             {
                 cur_item = max_item;
             }
@@ -166,7 +206,7 @@ void menu_update(int press_key)
             break;
         case btn_down:
             cur_item += 1;
-            if(cur_item >= max_item)
+            if(cur_item > max_item)
             {
                 cur_item = 0;
             }
@@ -174,8 +214,16 @@ void menu_update(int press_key)
 
             break;
     }
-    display_current_option();
+    //display_current_option();
+    //display_user_gui();
 }
+
+void entry_update()
+{
+    cur_entry = (cur_entry +1)%MAX_ENTRY;
+    Serial.println(cur_entry);
+}
+
 #if 0
 typedef struct pos_list
 {
@@ -273,30 +321,165 @@ void move_down(void)
     #endif
 }
 
+void both_btn_action(void)
+{
+    #ifdef SEEED_LCD
+    Serial.println("two Key pressed");
+    entry_update();
+    #endif
+}
+
+/*
+
+    int re_read_key = -1;
+    int pressed_key = -1;
+    int st_time = 0,end_time = 0;
+    int tmp_io;
+    for(int i = 0; i < MAX_BTN_NUM ;i++)
+    {
+        int volt = digitalRead(btn_ctrl[i].pin_num);
+        if(volt == LOW)
+        {
+            SET_BTN_VOLT(i,volt);
+            delay(20);
+            re_read_key = (i == btn_up)?btn_down:btn_up;
+            pressed_key = i;
+            break;
+        }
+        if(volt == HIGH)
+        {
+            if(GET_BTN_STATE(i) == key_pressed)
+            {
+                SET_BTN_STATE(i,key_release);
+                delay(500);
+                Serial.println("key presssed");
+                SET_BTN_STATE(i,key_init);
+                return;
+            }
+        }
+    }
+
+    if(re_read_key != -1 && GET_BTN_STATE(pressed_key) == key_init)
+    {
+        st_time = millis();
+        end_time = st_time;
+        while((end_time - st_time)<500)
+        {
+            tmp_io = digitalRead(btn_ctrl[re_read_key].pin_num);
+            end_time = millis();
+            if(tmp_io == LOW)
+            {
+                Serial.println("two Key pressed");
+                return;
+            }
+        }
+    }
+
+    if(pressed_key != -1)
+    {
+        if(GET_BTN_STATE(pressed_key) == key_init)
+        {
+            SET_BTN_STATE(pressed_key,key_pressed);
+        }
+    }
+
+
+    if(BOTH_KEY_RELEASE())
+    {
+        if(GET_BTN_STATE(btn_up) == both_release||GET_BTN_STATE(btn_down) == both_release)
+        {
+            Serial.println("both release");
+            for(int i = 0; i < MAX_BTN_NUM ;i++)
+            {
+                SET_BTN_STATE(i,key_init);
+                return;
+            }
+        }
+    }
+
+*/
+
 void button_detect()
 {
-  //for(; i < MAX_BTN_NUM ;i++)
   //A PRESSED B PRESSED == LOW
-  #if 0
-  int up_btn = digitalRead(WIO_KEY_A);
-  int down_btn = digitalRead(WIO_KEY_B);
-  if(up_btn == LOW)
-  {
-      if(btn_ctrl[btn_up].key_state == key_release)
-          btn_ctrl[btn_up].key_state = key_pressed;
-      /*add some delay*/
-  }
-  else if (up_btn == HIGH)
-  {
-    /* code */
-      if(btn_ctrl[btn_up].key_state == key_pressed)
-      {
-          btn_ctrl[btn_up].key_state = key_release;
-          move_up();
-      }
 
-  }
-  #endif
+   for(int i = 0; i < MAX_BTN_NUM ;i++)
+    {
+        int volt = digitalRead(btn_ctrl[i].pin_num);
+        SET_BTN_VOLT(i,volt);
+    }
+
+    if(BOTH_KEY_PRESSED())
+    {
+        //Serial.println("two Key pressed");
+        //two key have to move down
+        /*
+        if(GET_BTN_STATE(btn_up)!= both_pressed&& GET_BTN_STATE(btn_down)!= both_pressed)
+        {
+            for(int i = 0; i < MAX_BTN_NUM ;i++)
+            {
+                SET_BTN_STATE(i,both_pressed);
+            }
+        }*/
+        if(GET_BTN_STATE(btn_up)!= both_pressed&& GET_BTN_STATE(btn_down)!= both_pressed)
+        {
+            for(int i = 0; i < MAX_BTN_NUM ;i++)
+            {
+                SET_BTN_STATE(i,both_pressed);
+            }
+        }
+        else
+        {
+            for(int i = 0; i < MAX_BTN_NUM ;i++)
+            {
+                if(GET_BTN_STATE(i) == both_release)
+                    SET_BTN_STATE(i,both_pressed);
+            }
+        }
+    }
+    if(BOTH_KEY_RELEASE())
+    {
+        if(GET_BTN_STATE(btn_up)== both_release || GET_BTN_STATE(btn_down)== both_release)
+        {
+            Serial.println("two Key released");
+            for(int i = 0; i < MAX_BTN_NUM ;i++)
+            {
+                SET_BTN_STATE(i,key_init);
+            }
+            return;
+        }
+
+    }
+    for(int i = 0; i < MAX_BTN_NUM ;i++)
+    {
+        if(GET_BTN_VOLT(i) == LOW)
+        {
+            if(GET_BTN_STATE(i) == key_init)
+                {
+                    SET_BTN_STATE(i,key_pressed);
+                    delay(20);
+                }
+        }
+        if(GET_BTN_VOLT(i) == HIGH)
+        {
+            if(GET_BTN_STATE(i) == key_pressed)
+            {
+                SET_BTN_STATE(i,key_release);
+                //TODO THING
+                BTN_KEY_ACTION(i);
+                delay(20);
+                SET_BTN_STATE(i,key_init);
+            }
+            if(GET_BTN_STATE(i) == both_pressed)
+            {
+                both_btn_action();
+                SET_BTN_STATE(i,both_release);
+            }
+
+        }
+
+    }
+    #if 0
 for(int i = 0; i < MAX_BTN_NUM ;i++)
    {
       int io_state = digitalRead(btn_ctrl[i].pin_num);
@@ -306,7 +489,19 @@ for(int i = 0; i < MAX_BTN_NUM ;i++)
           case LOW:
             {
                 if(btn_ctrl[i].key_state == key_release)
-                    btn_ctrl[i].key_state = key_pressed;
+                    {
+                        int all_key;
+                        btn_ctrl[i].key_state = key_pressed;
+                        BTN_PRESSED(i);
+                        all_key = ALL_KEY_PRESSED();
+                        if(all_key)
+                        {
+                            //TODO , both key pressed.move entry
+                            //KEY state change
+                            btn_ctrl[i].two_btn_action();
+                            ALL_KEY_RELEASED();
+                        }
+                    }
             }
             break;
            case HIGH:
@@ -315,17 +510,78 @@ for(int i = 0; i < MAX_BTN_NUM ;i++)
                 {
                     btn_ctrl[i].key_state = key_release;
                     btn_ctrl[i].btn_action();
-                    delay(500);
+                    BTN_RELEASE(i);
+                    delay(100);
                 }
             }
       }
    }
+   
+   for(int i = 0; i < MAX_BTN_NUM ;i++)
+    {
+        int volt = digitalRead(btn_ctrl[i].pin_num);
+        if(volt == LOW)
+            {
+                SET_BTN_VOLT(i,volt);
+                break;
+            }
+    }
+    if(BOTH_KEY_PRESSED())
+    {
+        //Serial.println("two Key pressed");
+        //two key have to move down
+
+        return;
+    }
+    for(int i = 0; i < MAX_BTN_NUM ;i++)
+    {
+        if(GET_BTN_VOLT(i) == LOW)
+        {
+            if(GET_BTN_STATE(i) == key_init)
+                SET_BTN_STATE(i,key_pressed);
+        }
+        if(GET_BTN_VOLT(i) == HIGH)
+        {
+            if(GET_BTN_STATE(i) == key_pressed)
+            {
+                SET_BTN_STATE(i,key_release);
+                //TODO THING
+                BTN_KEY_ACTION(i);
+                delay(500);
+                SET_BTN_STATE(i,key_init);
+            }
+        }
+
+    }
+    int up_io = digitalRead(btn_ctrl[btn_up].pin_num);
+    int down_io = digitalRead(btn_ctrl[btn_down].pin_num);
+    int st_time = 0,end_time;
+    if(up_io == LOW || down_io == LOW)
+    {
+        st_time = millis();
+        end_time = st_time;
+        while((end_time - st_time)<500)
+        {
+            
+            down_io = digitalRead(btn_ctrl[btn_down].pin_num);
+            end_time = millis();
+            if(down_io == LOW)
+            {
+                Serial.println("two Key pressed");
+                return;
+            }
+        }
+        
+    }
+#endif
+
 }
 
 // the setup function runs once when you press reset or power the board
 void setup() {
     Serial.begin(115200);
     tft.begin();
+    tft.setRotation(3);
     button_init();
     display_user_gui();
     //init_user_menu();
