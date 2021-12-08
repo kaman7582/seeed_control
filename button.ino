@@ -417,7 +417,7 @@ void move_down(void)
 void both_btn_action(void)
 {
     #ifdef SEEED_LCD
-    Serial.println("two Key pressed");
+    Serial.println("both_btn_action");
     entry_update();
     #endif
 }
@@ -504,7 +504,7 @@ void button_detect()
 
     if(BOTH_KEY_PRESSED())
     {
-        //Serial.println("two Key pressed");
+        Serial.println("two Key pressed");
         //two key have to move down
         /*
         if(GET_BTN_STATE(btn_up)!= both_pressed&& GET_BTN_STATE(btn_down)!= both_pressed)
@@ -551,6 +551,7 @@ void button_detect()
                 {
                     SET_BTN_STATE(i,key_pressed);
                     delay(20);
+                    break;
                 }
         }
         if(GET_BTN_VOLT(i) == HIGH)
@@ -560,17 +561,19 @@ void button_detect()
                 SET_BTN_STATE(i,key_release);
                 //TODO THING
                 BTN_KEY_ACTION(i);
-                delay(20);
                 SET_BTN_STATE(i,key_init);
+                delay(20);
+                break;
             }
             if(GET_BTN_STATE(i) == both_pressed)
             {
                 both_btn_action();
                 SET_BTN_STATE(i,both_release);
+                delay(20);
+                break;
             }
 
         }
-
     }
     #if 0
 for(int i = 0; i < MAX_BTN_NUM ;i++)
